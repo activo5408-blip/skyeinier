@@ -37,3 +37,13 @@ jobs:
           releaseBody: "Instalador de Windows generado automáticamente."
           releaseDraft: true
           prerelease: false
+
+      - name: Subir instaladores como Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiniTube-Player-Windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
