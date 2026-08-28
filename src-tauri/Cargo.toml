@@ -1,0 +1,21 @@
+[package]
+name = "reproductor-youtube-variados"
+version = "1.1.0"
+description = "Reproductor de YouTube por categorías variadas"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = true }
+urlencoding = "2"
+
+[lib]
+name = "reproductor_youtube_variados_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
