@@ -43,7 +43,7 @@ const AUTO_HIDE_KEY = "yt-variados-autohide";
 const NORMAL_SIZE = { width: 520, height: 720 };
 const MIN_SIZE_NORMAL = { width: 400, height: 560 };
 const DOCKED_SIZE = { width: 340, height: 720 };
-const EDGE_STRIP_WIDTH = 10;
+const EDGE_STRIP_WIDTH = 14; // px físicos — lo bastante ancha para hover fiable en pantallas HiDPI
 const DOCK_THRESHOLD = 48; // px desde el borde derecho para considerar "acoplado"
 
 const Icon = ({ name, size = 22 }) => {
@@ -130,6 +130,8 @@ export default function App() {
   const hideTimerRef = useRef(null);
   const autoHideListoRef = useRef(false);
   const dockedRef = useRef(false);
+  const collapsedRef = useRef(false);
+  const autoHideRef = useRef(true);
   const isResizingRef = useRef(false);
 
   useEffect(() => { queueRef.current = queue; }, [queue]);
@@ -137,6 +139,8 @@ export default function App() {
   useEffect(() => { repeatAllRef.current = repeatAll; }, [repeatAll]);
   useEffect(() => { volumeRef.current = volume; }, [volume]);
   useEffect(() => { dockedRef.current = docked; }, [docked]);
+  useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
+  useEffect(() => { autoHideRef.current = autoHide; }, [autoHide]);
 
   const stopProgress = useCallback(() => {
     if (progressTimerRef.current) {
@@ -234,6 +238,23 @@ export default function App() {
       },
     });
   }, [onPlayerStateChange, siguiente]);
+
+  // Host permanente del iframe de YouTube (fuera del árbol React condicional).
+  // Así al colapsar/expandir/acoplar no se destruye el reproductor ni se corta el audio.
+  useEffect(() => {
+    let host = document.getElementById("yt-permanent-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "yt-permanent-host";
+      host.className = "youtube-host";
+      host.setAttribute("aria-hidden", "true");
+      document.body.appendChild(host);
+    }
+    playerElRef.current = host;
+    return () => {
+      // No eliminamos el host al desmontar el componente (HMR); el player vive en él.
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -412,6 +433,7 @@ export default function App() {
       await win.setPosition(new PhysicalPosition(x, y));
       await win.setAlwaysOnTop(true);
       setDocked(true);
+      collapsedRef.current = false;
       setCollapsed(false);
     } catch {}
     finally { isResizingRef.current = false; }
@@ -434,35 +456,47 @@ export default function App() {
       }
       await win.setSizeConstraints({ minWidth: MIN_SIZE_NORMAL.width, minHeight: MIN_SIZE_NORMAL.height });
       setDocked(false);
+      collapsedRef.current = false;
       setCollapsed(false);
     } catch {}
     finally { isResizingRef.current = false; }
   }, []);
 
   // ---------- Auto-ocultar a franja fina ----------
+  // Usamos refs para no recrear listeners en cada collapse/expand (evita carreras).
   const colapsarVentana = useCallback(async () => {
-    if (collapsed || isResizingRef.current) return;
+    if (collapsedRef.current || isResizingRef.current) return;
     isResizingRef.current = true;
+    collapsedRef.current = true; // marcar ya para evitar dobles llamadas
     try {
       const win = getCurrentWindow();
       if (!expandedBoundsRef.current) await guardarBordesActuales();
       const monitor = await win.currentMonitor();
-      if (!monitor) return;
+      if (!monitor) {
+        collapsedRef.current = false;
+        return;
+      }
+      const escala = monitor.scaleFactor || 1;
+      const stripW = Math.max(EDGE_STRIP_WIDTH, Math.round(12 * escala));
       const alturaFranja = Math.round(monitor.size.height * 0.45);
       const y = monitor.position.y + Math.round((monitor.size.height - alturaFranja) / 2);
-      const x = monitor.position.x + monitor.size.width - EDGE_STRIP_WIDTH;
+      const x = monitor.position.x + monitor.size.width - stripW;
       await win.setSizeConstraints({ minWidth: 0, minHeight: 0 });
-      await win.setSize(new PhysicalSize(EDGE_STRIP_WIDTH, alturaFranja));
+      await win.setSize(new PhysicalSize(stripW, alturaFranja));
       await win.setPosition(new PhysicalPosition(x, y));
       await win.setAlwaysOnTop(true);
       setCollapsed(true);
-    } catch {}
-    finally { isResizingRef.current = false; }
-  }, [collapsed, guardarBordesActuales]);
+    } catch {
+      collapsedRef.current = false;
+    } finally {
+      isResizingRef.current = false;
+    }
+  }, [guardarBordesActuales]);
 
   const expandirVentana = useCallback(async () => {
-    if (!collapsed || isResizingRef.current) return;
+    if (!collapsedRef.current || isResizingRef.current) return;
     isResizingRef.current = true;
+    collapsedRef.current = false; // marcar ya para evitar dobles llamadas
     try {
       const win = getCurrentWindow();
       const b = expandedBoundsRef.current;
@@ -493,9 +527,12 @@ export default function App() {
         setDocked(false);
       }
       setCollapsed(false);
-    } catch {}
-    finally { isResizingRef.current = false; }
-  }, [collapsed]);
+    } catch {
+      collapsedRef.current = true;
+    } finally {
+      isResizingRef.current = false;
+    }
+  }, []);
 
   // Detectar movimiento: si se acerca al borde derecho → acoplar (modo lateral)
   useEffect(() => {
@@ -506,7 +543,7 @@ export default function App() {
       try {
         const win = getCurrentWindow();
         unlisten = await win.onMoved(async () => {
-          if (isResizingRef.current || collapsed) return;
+          if (isResizingRef.current || collapsedRef.current) return;
           if (checkTimer) clearTimeout(checkTimer);
           checkTimer = setTimeout(async () => {
             try {
@@ -539,18 +576,15 @@ export default function App() {
       if (unlisten) unlisten();
       if (checkTimer) clearTimeout(checkTimer);
     };
-  }, [acoplarLateral, desacoplar, collapsed]);
+  }, [acoplarLateral, desacoplar]);
 
   // Auto-ocultar:
   // 1) Si perdés el foco (clic fuera de la ventana) → se esconde solo
   // 2) Si sacás el mouse de la ventana unos segundos → también se esconde
   // 3) Al pasar el mouse por la franja o recuperar el foco → vuelve a aparecer
+  // Los listeners se registran UNA sola vez (deps estables + refs) para evitar
+  // que se cancelen timers o se pierdan eventos al expandir/colapsar.
   useEffect(() => {
-    if (!autoHide) {
-      if (collapsed) expandirVentana();
-      return;
-    }
-
     const cancelHide = () => {
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
@@ -559,37 +593,37 @@ export default function App() {
     };
 
     const scheduleHide = (ms = 400) => {
-      if (!autoHideListoRef.current) return;
+      if (!autoHideRef.current || !autoHideListoRef.current) return;
+      if (collapsedRef.current || isResizingRef.current) return;
       cancelHide();
       hideTimerRef.current = setTimeout(() => {
-        colapsarVentana();
+        if (autoHideRef.current && !collapsedRef.current) {
+          colapsarVentana();
+        }
       }, ms);
     };
 
-    // --- Clic fuera / perder foco de la ventana (lo más fiable en Windows) ---
-    const onBlur = () => {
-      scheduleHide(300);
-    };
-    const onFocus = () => {
+    const showIfCollapsed = () => {
       cancelHide();
-      if (collapsed) expandirVentana();
+      if (collapsedRef.current) expandirVentana();
     };
+
+    // --- Clic fuera / perder foco de la ventana (lo más fiable en Windows) ---
+    const onBlur = () => { scheduleHide(350); };
+    const onFocus = () => { showIfCollapsed(); };
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
 
-    // --- Mouse sale de la ventana ---
+    // --- Mouse sale / entra de la ventana (document + body por compatibilidad WebView2) ---
     const onMouseLeave = (e) => {
-      // Solo si realmente salió de la ventana (relatedTarget null)
-      if (e.relatedTarget === null) {
-        scheduleHide(600);
-      }
+      // relatedTarget null = salió de la ventana hacia fuera
+      if (e.relatedTarget == null) scheduleHide(700);
     };
-    const onMouseEnter = () => {
-      cancelHide();
-      if (collapsed) expandirVentana();
-    };
+    const onMouseEnter = () => { showIfCollapsed(); };
     document.addEventListener("mouseleave", onMouseLeave);
     document.addEventListener("mouseenter", onMouseEnter);
+    document.body?.addEventListener("mouseleave", onMouseLeave);
+    document.body?.addEventListener("mouseenter", onMouseEnter);
 
     // --- Tauri: evento nativo de foco de la ventana ---
     let unlistenFocus = null;
@@ -597,12 +631,8 @@ export default function App() {
       try {
         const win = getCurrentWindow();
         unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
-          if (focused) {
-            cancelHide();
-            if (collapsed) expandirVentana();
-          } else {
-            scheduleHide(300);
-          }
+          if (focused) showIfCollapsed();
+          else scheduleHide(350);
         });
       } catch {}
     })();
@@ -612,10 +642,19 @@ export default function App() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("mouseleave", onMouseLeave);
       document.removeEventListener("mouseenter", onMouseEnter);
+      document.body?.removeEventListener("mouseleave", onMouseLeave);
+      document.body?.removeEventListener("mouseenter", onMouseEnter);
       cancelHide();
       if (unlistenFocus) unlistenFocus();
     };
-  }, [autoHide, collapsed, colapsarVentana, expandirVentana]);
+  }, [colapsarVentana, expandirVentana]);
+
+  // Si el usuario desactiva auto-ocultar mientras está colapsado → expandir
+  useEffect(() => {
+    if (!autoHide && collapsed) {
+      expandirVentana();
+    }
+  }, [autoHide, collapsed, expandirVentana]);
 
   const cambiarAutoHide = (valor) => {
     setAutoHide(valor);
@@ -641,9 +680,12 @@ export default function App() {
   // ---------- Franja de auto-ocultar ----------
   if (collapsed) {
     return (
-      <div className="edge-strip" onMouseEnter={expandirVentana} onClick={expandirVentana} title="Mostrar MiniTube Player">
-        <div ref={playerElRef} className="youtube-host" aria-hidden="true" />
-      </div>
+      <div
+        className="edge-strip"
+        onMouseEnter={expandirVentana}
+        onClick={expandirVentana}
+        title="Mostrar MiniTube Player"
+      />
     );
   }
 
@@ -651,8 +693,6 @@ export default function App() {
   if (docked) {
     return (
       <div className="app app-docked">
-        <div ref={playerElRef} className="youtube-host" aria-hidden="true" />
-
         <header className="titlebar titlebar-docked" data-tauri-drag-region>
           <div className="brand" data-tauri-drag-region>
             <span className="brand-badge"><Icon name="music" size={16} /></span>
@@ -747,8 +787,6 @@ export default function App() {
   // ---------- MODO NORMAL / COMPACTO (izquierda de la foto) — al abrir ----------
   return (
     <div className="app app-normal">
-      <div ref={playerElRef} className="youtube-host" aria-hidden="true" />
-
       <header className="titlebar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
           <span className="brand-badge"><Icon name="music" size={18} /></span>

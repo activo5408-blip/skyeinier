@@ -39,6 +39,10 @@ body {
   cursor: pointer;
   background: linear-gradient(180deg, #a855f7, #ec4899 50%, #f59e0b);
   box-shadow: 0 0 14px rgba(236, 72, 153, 0.7), 0 0 28px rgba(168, 85, 247, 0.4);
+  /* Asegura que el hover/click funcione en toda la franja */
+  pointer-events: auto;
+  user-select: none;
+  -webkit-app-region: no-drag;
 }
 
 /* -------------------- Barra de título -------------------- */

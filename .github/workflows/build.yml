@@ -39,7 +39,12 @@ jobs:
           releaseBody: |
             Instalador de Windows generado automáticamente.
 
-            **Novedades v1.2**
+            **Novedades v1.2.1**
+            - Fix: auto-ocultar ya no corta la música ni deja de responder
+            - Host de YouTube permanente (no se destruye al colapsar/expandir)
+            - Franja de auto-ocultar más ancha y estable en pantallas HiDPI
+
+            **v1.2**
             - Al abrir: ventana compacta (lista + mini player)
             - Arrastrá al borde derecho → modo lateral compacto
             - Auto-ocultar en el borde del monitor
