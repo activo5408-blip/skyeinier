@@ -1,6 +1,6 @@
 [package]
 name = "reproductor-youtube-variados"
-version = "1.1.0"
+version = "1.2.0"
 description = "Reproductor de YouTube por categorías variadas"
 authors = ["you"]
 edition = "2021"
