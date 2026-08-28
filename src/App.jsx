@@ -37,9 +37,11 @@ const CATEGORIES = [
 
 const FAVORITES_KEY = "yt-variados-favoritos";
 const AUTO_HIDE_KEY = "yt-variados-autohide";
-const EXPANDED_SIZE = { width: 980, height: 700 };
-const MIN_SIZE_NORMAL = { width: 820, height: 560 };
-const EDGE_STRIP_WIDTH = 10;
+const EXPANDED_SIZE = { width: 760, height: 760 };
+const MIN_SIZE_NORMAL = { width: 680, height: 640 };
+const LATERAL_SIZE = { width: 350, height: 720 };
+const EDGE_STRIP_WIDTH = 12;
+const DOCK_MARGIN = 18;
 
 const Icon = ({ name, size = 22 }) => {
   const common = {
@@ -128,7 +130,9 @@ export default function App() {
   // ---------- Auto-ocultado en el borde del monitor ----------
   const [autoHide, setAutoHide] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
+  const [docked, setDocked] = useState(false);
   const expandedBoundsRef = useRef(null);
+  const lateralBoundsRef = useRef(null);
   const hideTimerRef = useRef(null);
   const autoHideListoRef = useRef(false);
 
@@ -387,13 +391,15 @@ export default function App() {
     setMessage("Añadido a favoritos ⭐");
   };
 
-  // ---------- Ocultar en el borde del monitor / mostrar al pasar el mouse ----------
+  // ---------- Acoplar a la izquierda / modo lateral ----------
   const guardarBordesActuales = useCallback(async () => {
     try {
       const win = getCurrentWindow();
       const pos = await win.outerPosition();
       const size = await win.outerSize();
-      if (size.width > EDGE_STRIP_WIDTH * 2) expandedBoundsRef.current = { pos, size };
+      if (size.width > EDGE_STRIP_WIDTH * 2 && size.width > LATERAL_SIZE.width) {
+        expandedBoundsRef.current = { pos, size };
+      }
     } catch {}
   }, []);
 
@@ -404,16 +410,33 @@ export default function App() {
       if (!expandedBoundsRef.current) await guardarBordesActuales();
       const monitor = await win.currentMonitor();
       if (!monitor) return;
-      const alturaFranja = Math.round(monitor.size.height * 0.45);
+      const alturaFranja = Math.round(Math.min(monitor.size.height * 0.46, 420));
       const y = monitor.position.y + Math.round((monitor.size.height - alturaFranja) / 2);
-      const x = monitor.position.x + monitor.size.width - EDGE_STRIP_WIDTH;
+      const x = monitor.position.x - EDGE_STRIP_WIDTH + 2;
       await win.setSizeConstraints({ minWidth: 0, minHeight: 0 });
       await win.setSize(new PhysicalSize(EDGE_STRIP_WIDTH, alturaFranja));
       await win.setPosition(new PhysicalPosition(x, y));
       await win.setAlwaysOnTop(true);
+      setDocked(true);
       setCollapsed(true);
     } catch {}
   }, [collapsed, guardarBordesActuales]);
+
+  const mostrarLateral = useCallback(async () => {
+    if (!collapsed) return;
+    try {
+      const win = getCurrentWindow();
+      const monitor = await win.currentMonitor();
+      if (!monitor) return;
+      const h = Math.min(LATERAL_SIZE.height, monitor.size.height - 36);
+      const y = monitor.position.y + Math.round((monitor.size.height - h) / 2);
+      const x = monitor.position.x + DOCK_MARGIN;
+      await win.setSize(new PhysicalSize(LATERAL_SIZE.width, h));
+      await win.setPosition(new PhysicalPosition(x, y));
+      await win.setAlwaysOnTop(true);
+      setCollapsed(false);
+    } catch {}
+  }, [collapsed]);
 
   const expandirVentana = useCallback(async () => {
     if (!collapsed) return;
@@ -429,6 +452,7 @@ export default function App() {
         await win.center();
       }
       await win.setSizeConstraints({ minWidth: MIN_SIZE_NORMAL.width, minHeight: MIN_SIZE_NORMAL.height });
+      setDocked(false);
       setCollapsed(false);
     } catch {}
   }, [collapsed]);
@@ -440,12 +464,22 @@ export default function App() {
     }
     const onEnter = () => {
       if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
-      if (collapsed) expandirVentana();
+      if (collapsed && docked) mostrarLateral();
+      else if (collapsed) expandirVentana();
     };
     const onLeave = () => {
       if (!autoHideListoRef.current) return;
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = setTimeout(() => { colapsarVentana(); }, 900);
+      hideTimerRef.current = setTimeout(async () => {
+        try {
+          const win = getCurrentWindow();
+          const pos = await win.outerPosition();
+          const monitor = await win.currentMonitor();
+          if (!monitor) return;
+          const nearLeft = pos.x <= monitor.position.x + 28;
+          if (nearLeft || docked) colapsarVentana();
+        } catch {}
+      }, 800);
     };
     document.addEventListener("mouseenter", onEnter);
     document.addEventListener("mouseleave", onLeave);
@@ -454,7 +488,7 @@ export default function App() {
       document.removeEventListener("mouseleave", onLeave);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [autoHide, collapsed, colapsarVentana, expandirVentana]);
+  }, [autoHide, collapsed, docked, colapsarVentana, expandirVentana, mostrarLateral]);
 
   const cambiarAutoHide = (valor) => {
     setAutoHide(valor);
@@ -480,7 +514,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${docked ? "app-lateral" : ""}`}>
       {/* El iframe NO usa display:none: YouTube puede detener un reproductor completamente oculto. */}
       <div ref={playerElRef} className="youtube-host" aria-hidden="true" />
 
@@ -507,7 +541,6 @@ export default function App() {
 
         <div className="titlebar-actions">
           <button className="tb-btn" onClick={() => getCurrentWindow().minimize()} title="Minimizar">&#8211;</button>
-          <button className="tb-btn" onClick={() => getCurrentWindow().toggleMaximize()} title="Maximizar">&#9633;</button>
           <button className="tb-btn tb-btn-close" onClick={() => getCurrentWindow().close()} title="Cerrar">&#10005;</button>
         </div>
       </header>
@@ -541,7 +574,7 @@ export default function App() {
       <main className="content">
         <section className="results-card">
           <div className="results-header">
-            <span><Icon name="music" size={13} /> LISTA DE REPRODUCCIÓN <em>{queue.length ? `· ${formatMin(duracionTotalSeg)}` : ""}</em></span>
+            <span>RESULTADOS ({queue.length}){queue.length ? ` · ${formatMin(duracionTotalSeg)}` : ""}</span>
             {loading && <span className="results-loading">Buscando...</span>}
           </div>
           {queue.length === 0 ? (
@@ -556,78 +589,100 @@ export default function App() {
                   className={`queue-item ${index === currentIndex ? "current" : ""}`}
                   onClick={() => playAt(index)}
                 >
-                  <img src={video.thumbnail} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
+                  <img
+                    src={video.thumbnail}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => { e.currentTarget.style.visibility = "hidden"; }}
+                  />
                   <span className="queue-text">
                     <span className="queue-title" title={video.title}>{video.title}</span>
                     <span className="queue-channel" title={video.channel}>{video.channel}</span>
                   </span>
-                  {index === currentIndex && playing && <span className="queue-bars"><Icon name="bars" size={17} /></span>}
+                  {index === currentIndex && playing && <span className="queue-bars"><Icon name="bars" size={18} /></span>}
                   <span className="queue-duration">{video.duration || "--:--"}</span>
-                  <span className="queue-more">☰</span>
                 </button>
               ))}
             </div>
           )}
-          <div className="bottom-player">
-            <div className="bottom-track">
-              <div className="bottom-thumb">
-                {queue[currentIndex] ? <img src={queue[currentIndex].thumbnail} alt="" /> : <Icon name="music" size={18} />}
-              </div>
-              <div className="bottom-info">
-                <strong title={title}>{title}</strong>
-                <span title={channel}>{channel}</span>
-                <div className="bottom-progress"><span style={{ width: `${progressPct}%` }} /></div>
-                <div className="bottom-time"><span>{fmt(currentTime)}</span><span>{fmt(duration)}</span></div>
-              </div>
-            </div>
-            <div className="bottom-controls">
-              <button className={`mini-icon ${repeatAll ? "active" : ""}`} onClick={() => setRepeatAll((v) => !v)} title="Repetir todo"><Icon name="repeat" size={16} /></button>
-              <button className="mini-icon" onClick={anterior} disabled={!ready || queue.length < 2}><Icon name="prev" size={17} /></button>
-              <button className="mini-main" onClick={togglePlay} disabled={!ready || !queue.length}><Icon name={playing ? "pause" : "play"} size={20} /></button>
-              <button className="mini-icon" onClick={siguiente} disabled={!ready || queue.length < 2}><Icon name="next" size={17} /></button>
-              <button className={`mini-icon favorite-mini ${queue[currentIndex] && favorites.some((f) => f.id === queue[currentIndex].id) ? "liked" : ""}`} onClick={agregarFavorito} disabled={!ready || currentIndex < 0} title="Favorito"><Icon name="heart" size={16} /></button>
-              <div className="mini-volume"><Icon name="volume" size={15} /><input type="range" min="0" max="100" value={volume} onChange={changeVolume} /><span>{volume}%</span></div>
-            </div>
-          </div>
         </section>
 
-        <aside className="now-playing">
-          <div className="now-header"><span>AHORA REPRODUCIENDO</span><span className="live-dot" /></div>
+        <section className="now-playing">
           <div className="art-frame">
-            {queue[currentIndex] ? <img src={queue[currentIndex].thumbnail.replace("mqdefault", "hqdefault")} alt="" /> : <div className="art-placeholder"><Icon name="music" size={44} /></div>}
+            {queue[currentIndex] ? (
+              <img src={queue[currentIndex].thumbnail.replace("mqdefault", "hqdefault")} alt="" />
+            ) : (
+              <div className="art-placeholder"><Icon name="music" size={48} /></div>
+            )}
           </div>
+
           <div className="np-title" title={title}>{title}</div>
           <div className="np-channel" title={channel}>{channel}</div>
+
           {message && <div className="player-message">{message}</div>}
-          <div className="side-progress">
-            <input type="range" min="0" max="100" value={progressPct} onChange={seek} disabled={!ready || duration <= 0} />
-            <div className="time-row"><span>{fmt(currentTime)}</span><span>{fmt(duration)}</span></div>
-          </div>
-          <div className="side-controls">
-            <button className={`side-icon ${repeatAll ? "active" : ""}`} onClick={() => setRepeatAll((v) => !v)} title="Repetir"><Icon name="repeat" size={17} /></button>
-            <button className="side-icon" onClick={anterior} disabled={!ready || queue.length < 2}><Icon name="prev" size={18} /></button>
-            <button className="side-main" onClick={togglePlay} disabled={!ready || !queue.length}><Icon name={playing ? "pause" : "play"} size={23} /></button>
-            <button className="side-icon" onClick={siguiente} disabled={!ready || queue.length < 2}><Icon name="next" size={18} /></button>
-            <button className="side-icon favorite-side" onClick={agregarFavorito} disabled={!ready || currentIndex < 0} title="Favorito"><Icon name="heart" size={17} /></button>
-          </div>
-          <div className="side-volume"><Icon name="volume" size={15} /><input type="range" min="0" max="100" value={volume} onChange={changeVolume} /><span>{volume}%</span></div>
-          <div className="next-card">
-            <div className="next-header"><span>☷ &nbsp;SIGUIENTES ({Math.max(0, queue.length - currentIndex - 1)})</span><button onClick={() => { if (queue.length > 1) siguiente(); }} title="Siguiente">↗</button></div>
-            <div className="next-list">
-              {queue.slice(Math.max(0, currentIndex + 1), currentIndex + 1 + 8).map((video, i) => (
-                <button key={`${video.id}-next-${i}`} className="next-item" onClick={() => playAt(currentIndex + 1 + i)}>
-                  <img src={video.thumbnail} alt="" />
-                  <span><strong>{video.title}</strong><small>{video.duration || "--:--"}</small></span>
-                </button>
-              ))}
-              {!queue.length && <div className="next-empty">Aquí aparecerán las próximas canciones.</div>}
+
+          <div className="waveform-wrap">
+            <div className="waveform">
+              {ondas.map((h, i) => <div key={i} className="waveform-bar" style={{ height: `${h}%` }} />)}
             </div>
+            <div className="waveform-overlay" style={{ width: `${progressPct}%` }}>
+              <div className="waveform">
+                {ondas.map((h, i) => <div key={i} className="waveform-bar" style={{ height: `${h}%` }} />)}
+              </div>
+            </div>
+            <input
+              type="range" min="0" max="100" value={progressPct}
+              onChange={seek} className="waveform-seek"
+              disabled={!ready || duration <= 0}
+            />
           </div>
+          <div className="time-row">
+            <span>{fmt(currentTime)}</span>
+            <span>{fmt(duration)}</span>
+          </div>
+
           <button className="fav-add" title="Agregar a favoritos" onClick={agregarFavorito} disabled={!ready || currentIndex < 0}>
-            <Icon name="star" size={15} /> Agregar a favoritos
+            <Icon name="star" size={16} /> Agregar a favoritos
           </button>
-        </aside>
+        </section>
       </main>
+
+      <section className="compact-current">
+        <div className="compact-art">
+          {queue[currentIndex] ? <img src={queue[currentIndex].thumbnail} alt="" /> : <Icon name="music" size={24} />}
+        </div>
+        <div className="compact-meta">
+          <div className="compact-title" title={title}>{title}</div>
+          <div className="compact-channel" title={channel}>{channel}</div>
+          <div className="compact-progress"><span style={{ width: `${progressPct}%` }} /></div>
+          <div className="compact-times"><span>{fmt(currentTime)}</span><span>{fmt(duration)}</span></div>
+        </div>
+        <button className="compact-heart" onClick={agregarFavorito} disabled={!ready || currentIndex < 0} title="Agregar a favoritos"><Icon name="star" size={18} /></button>
+      </section>
+
+      <footer className="controls-bar">
+        <button
+          className={`ctrl-btn ${repeatAll ? "ctrl-btn-active" : ""}`}
+          onClick={() => setRepeatAll((v) => !v)}
+          title={repeatAll ? "Repetir todo: activado" : "Repetir todo: desactivado"}
+        >
+          <Icon name="repeat" size={17} />
+        </button>
+        <button className="ctrl-btn" onClick={anterior} disabled={!ready || queue.length < 2} title="Anterior">
+          <Icon name="prev" size={18} />
+        </button>
+        <button className="ctrl-btn ctrl-btn-main" onClick={togglePlay} disabled={!ready || !queue.length} title={playing ? "Pausar" : "Reproducir"}>
+          <Icon name={playing ? "pause" : "play"} size={24} />
+        </button>
+        <button className="ctrl-btn" onClick={siguiente} disabled={!ready || queue.length < 2} title="Siguiente">
+          <Icon name="next" size={18} />
+        </button>
+        <div className="volume-box">
+          <Icon name="volume" size={16} />
+          <input type="range" min="0" max="100" value={volume} onChange={changeVolume} className="volume-slider" />
+          <span className="volume-pct">{volume}%</span>
+        </div>
+      </footer>
 
       <footer className="statusbar">
         <span className={`status-dot ${ready ? "connected" : ""}`} />

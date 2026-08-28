@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "MiniTube Player",
-        "width": 980,
-        "height": 700,
-        "minWidth": 820,
-        "minHeight": 560,
+        "width": 760,
+        "height": 760,
+        "minWidth": 680,
+        "minHeight": 640,
         "resizable": true,
         "decorations": false,
         "transparent": false,
